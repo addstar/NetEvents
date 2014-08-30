@@ -1,8 +1,4 @@
-# The address to listen on
-listen-at: 0.0.0.0:25566
-# A list of servers that events will be passed on to.
-forward-to:
-    - server.address.example.com:25566
-
- # Passphrase to use for encryption
-passphrase: changeme
+redis:
+  host: localhost
+  port: 6379
+  password:

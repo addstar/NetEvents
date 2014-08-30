@@ -15,7 +15,6 @@
  */
 package com.zachsthings.netevents;
 
-import com.zachsthings.netevents.ping.PingEvent;
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -54,16 +53,7 @@ class StatusCommand implements CommandExecutor {
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) {
             sender.sendMessage(text("NetEvents version ", hl(plugin.getDescription().getVersion())));
-            sender.sendMessage(text("Remote listener bound to ", hl(plugin.getBoundAddress().toString())));
-            sender.sendMessage(text("Connected servers:"));
-            for (Forwarder f : plugin.getForwarders()) {
-                if (f.isActive()) {
-                    sender.sendMessage(text("- ", hl(f.getRemoteAddress().toString())));
-                } else if (f.getRemoteAddress() != null) {
-                    sender.sendMessage(text("- ", ChatColor.RED + f.getRemoteAddress().toString()));
-                }
-            }
-            sender.sendMessage(error("Usage: /" + label + " <reload|tryconnect|ping|debug>"));
+            sender.sendMessage(error("Usage: /" + label + " <reload|debug>"));
         } else {
             final String commandLabel = args[0];
             if (commandLabel.equals("reload")) {
@@ -75,22 +65,11 @@ class StatusCommand implements CommandExecutor {
                     plugin.getLogger().log(Level.SEVERE, "Error reloading", e);
                 }
 
-            } else if (commandLabel.equals("tryconnect")) {
-                plugin.getReconnectTask().attemptAllNext();
-                sender.sendMessage(text("Attempting to reconnect to all errored servers next second"));
-            } else if (commandLabel.equals("ping")) {
-                plugin.callEvent(new PingEvent());
-                sender.sendMessage(text("Sent ping to all connected servers"));
             } else if (commandLabel.equals("debug")) {
                 final boolean debugState = !plugin.hasDebugMode();
                 plugin.setDebugMode(debugState);
                 sender.sendMessage(text("Debug mode ", hl(debugState ? "enabled" : "disabled")));
-            } /* else if (commandLabel.equals("connect")) {
-                if (args.length < 2) {
-                    sender.sendMessage("Not enough arguments! Usage: /" + commandLabel + " connect <server>");
-                    return true;
-                }
-            }*/
+            }
         }
         return true;
     }
