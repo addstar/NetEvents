@@ -6,9 +6,11 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.nio.charset.Charset;
+import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -19,6 +21,8 @@ import redis.clients.jedis.BinaryJedisPubSub;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
+import redis.clients.jedis.exceptions.JedisConnectionException;
+import redis.clients.jedis.exceptions.JedisException;
 
 public class RedisConnection {
     public static final Charset UTF_8 = Charset.forName("UTF-8");
@@ -26,6 +30,7 @@ public class RedisConnection {
 
     private JedisPool mPool;
     private NetEventsPlugin mPlugin;
+    private LinkedBlockingQueue<byte[]> mQueue;
 
     public RedisConnection(NetEventsPlugin plugin, String host, int port, String password) {
         if (password == null || password.isEmpty()) {
@@ -35,6 +40,8 @@ public class RedisConnection {
         }
         
         mPlugin = plugin;
+        mQueue = new LinkedBlockingQueue<>();
+        Bukkit.getScheduler().runTaskAsynchronously(mPlugin, new DataSender());
     }
     
     public void close() {
@@ -47,17 +54,38 @@ public class RedisConnection {
         Thread thread = new Thread(new Runnable() {
             @Override
             public void run() {
-                Jedis jedis = mPool.getResource();
-                try {
-                    mPlugin.debug("Subscribing to 'NetEvents'");
-                    jedis.subscribe(wrapper, CHANNEL);
-                    mPlugin.debug("REDIS 'NetEvents' channel terminated");
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    mPool.returnBrokenResource(jedis);
-                    return;
+                boolean err = true;
+                boolean failing = false;
+                while (err) {
+                    Jedis jedis = null;
+                    try {
+                        jedis = mPool.getResource();
+                        jedis.clientSetname("NetEvents-" + Bukkit.getServerName());
+                        failing = false;
+                        mPlugin.debug("Subscribing to 'NetEvents'");
+                        jedis.subscribe(wrapper, CHANNEL);
+                        mPlugin.debug("REDIS 'NetEvents' channel terminated");
+                        err = false;
+                    } catch (JedisConnectionException e) {
+                        if (!failing) {
+                            e.printStackTrace();
+                        }
+                        failing = true;
+
+                        mPool.returnBrokenResource(jedis);
+                        jedis = null;
+                        try {
+                            Thread.sleep(2000);
+                        } catch (InterruptedException ex) {
+                            err = false;
+                        }
+                    } catch (JedisException e) {
+                        e.printStackTrace();
+                        err = false;
+                    } finally {
+                        mPool.returnResource(jedis);
+                    }
                 }
-                mPool.returnResource(jedis);
             }
         });
         
@@ -89,15 +117,7 @@ public class RedisConnection {
             return;
         }
 
-        Jedis jedis = mPool.getResource();
-        try {
-            jedis.publish(CHANNEL, stream.toByteArray());
-        } catch (Exception e) {
-            e.printStackTrace();
-            mPool.returnBrokenResource(jedis);
-            return;
-        }
-        mPool.returnResource(jedis);
+        mQueue.offer(stream.toByteArray());
     }
 
     private class DataHandler extends BinaryJedisPubSub implements Future<Void> {
@@ -109,7 +129,7 @@ public class RedisConnection {
 
         @Override
         public void onMessage(byte[] channel, byte[] data) {
-            if (channel != CHANNEL) {
+            if (!Arrays.equals(channel, CHANNEL)) {
                 return;
             }
             
@@ -184,6 +204,33 @@ public class RedisConnection {
         public Void get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
             mLatch.await(timeout, unit);
             return null;
+        }
+    }
+    
+    private class DataSender implements Runnable
+    {
+        @Override
+        public void run() {
+            try {
+                while (true) {
+                    byte[] data = mQueue.take();
+
+                    Jedis jedis = null;
+                    try {
+                        jedis = mPool.getResource();
+                        jedis.publish(CHANNEL, data);
+                    } catch (JedisConnectionException e) {
+                        mPool.returnBrokenResource(jedis);
+                        jedis = null;
+                    } catch (JedisException e) {
+                        e.printStackTrace();
+                    } finally {
+                        mPool.returnResource(jedis);
+                    }
+                }
+            } catch(InterruptedException e) {
+                
+            }
         }
     }
 }
